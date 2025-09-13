@@ -3,7 +3,6 @@ import streamlit as st
 from transformers import pipeline
 import pandas as pd
 import numpy as np
-import requests
 
 # --- Caching pipelines for faster execution ---
 @st.cache_resource
@@ -19,32 +18,11 @@ def fetch_stock_data(ticker, period="6mo"):
     info = data.info
     return hist, info
 
-# --- Phase 5: Dynamic top stocks selection ---
+# --- Phase 5: Top stocks (static fallback) ---
 @st.cache_data
 def get_top_stocks(n=10):
-    """
-    Fetch top active NSE stocks by volume.
-    Returns a list of tickers with .NS suffix.
-    """
-    try:
-        url = "https://www.nseindia.com/api/live-analysis-variations?index=eq"
-        headers = {
-            "User-Agent": "Mozilla/5.0",
-            "Accept-Language": "en-US,en;q=0.5"
-        }
-        session = requests.Session()
-        # Initial request to get cookies
-        session.get("https://www.nseindia.com", headers=headers)
-        resp = session.get(url, headers=headers).json()
-        # Extract data (adjust keys if NSE changes)
-        df = pd.DataFrame(resp['data'])
-        df = df.sort_values('tradedQuantity', ascending=False)
-        tickers = df['symbol'].head(n).tolist()
-        tickers = [t + ".NS" for t in tickers]
-        return tickers
-    except Exception as e:
-        st.warning(f"Error fetching NSE top stocks: {e}")
-        return ['VBL.NS','DABUR.NS','PFC.NS','ABDL.NS','JIO.NS','FINANCE.NS'][:n]
+    # Static fallback list
+    return ['VBL.NS','DABUR.NS','PFC.NS','ABDL.NS','JIO.NS','FINANCE.NS'][:n]
 
 # --- Agents ---
 def price_action_agent(hist):
@@ -139,9 +117,14 @@ if st.button("Generate Recommendations"):
     tickers = get_top_stocks(n=10)
     results = [analyze_stock(t) for t in tickers]
     df = pd.DataFrame(results)
-    df_expanded = df.join(pd.json_normalize(df.pop("Debate Transcript")))
-    df_expanded = df_expanded.join(pd.json_normalize(df.pop("Entry/Exit Levels")))
+
+    # Safely normalize nested dicts with prefixes to avoid column collisions
+    debate_df = pd.json_normalize(df.pop("Debate Transcript")).add_prefix("Debate_")
+    entry_df = pd.json_normalize(df.pop("Entry/Exit Levels")).add_prefix("EntryExit_")
+    df_expanded = df.join(debate_df).join(entry_df)
+
     st.table(df_expanded)
+
     if st.button("Export CSV"):
         df_expanded.to_csv("stock_recommendations.csv", index=False)
         st.success("Report saved")
