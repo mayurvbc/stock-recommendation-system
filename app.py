@@ -4,13 +4,14 @@ from transformers import pipeline
 import pandas as pd
 import numpy as np
 
-# --- Caching pipelines for faster execution ---
+# --- Cached sentiment pipeline ---
 @st.cache_resource
 def load_sentiment_pipeline():
     return pipeline("sentiment-analysis")
 
 sentiment_analyzer = load_sentiment_pipeline()
 
+# --- Fetch stock data ---
 @st.cache_data
 def fetch_stock_data(ticker, period="6mo"):
     data = yf.Ticker(ticker)
@@ -18,11 +19,24 @@ def fetch_stock_data(ticker, period="6mo"):
     info = data.info
     return hist, info
 
-# --- Phase 5: Top stocks (static fallback) ---
+# --- Get top stocks using yfinance ---
+def get_top_stocks_yf(tickers, n=5):
+    stock_volumes = []
+    for ticker in tickers:
+        try:
+            data = yf.Ticker(ticker).history(period="1mo")
+            avg_volume = data['Volume'].mean()
+            stock_volumes.append((ticker, avg_volume))
+        except:
+            continue
+    stock_volumes.sort(key=lambda x: x[1], reverse=True)
+    top_stocks = [t[0] for t in stock_volumes[:n]]
+    return top_stocks
+
 @st.cache_data
-def get_top_stocks(n=10):
-    # Static fallback list
-    return ['VBL.NS','DABUR.NS','PFC.NS','ABDL.NS','JIO.NS','FINANCE.NS'][:n]
+def get_top_stocks(n=5):
+    tickers = ['VBL.NS','DABUR.NS','PFC.NS','ABDL.NS','JIO.NS','FINANCE.NS']
+    return get_top_stocks_yf(tickers, n)
 
 # --- Agents ---
 def price_action_agent(hist):
@@ -78,7 +92,7 @@ def volume_agent(hist):
     else:
         return "Volume normal", 0.05, None, None
 
-# --- Multi-round debate moderator ---
+# --- Moderator ---
 def moderator(debate_dict):
     scores = [score for _,score,_,_ in debate_dict.values()]
     disagreement = max(scores)-min(scores)
@@ -90,11 +104,11 @@ def moderator(debate_dict):
             adjusted[agent]=(arg,score,entry,exit_level)
     return adjusted
 
-# --- Analyze single stock ---
+# --- Analyze stock ---
 def analyze_stock(ticker):
     hist, info = fetch_stock_data(ticker)
     if hist.empty:
-        return {"Ticker": ticker, "Recommendation":"Data Unavailable","Confidence (%)":0}
+        return {"Ticker": ticker, "Recommendation":"Data Unavailable","Confidence (%)":0, "Risk Level":"N/A", "Debate Transcript":{}, "Entry/Exit Levels":{}}
     debate = {}
     debate['Price Action'] = price_action_agent(hist)
     debate['Technical'] = technical_agent(hist)
@@ -111,50 +125,45 @@ def analyze_stock(ticker):
             "Risk Level":risk_level,"Debate Transcript":transcript,"Entry/Exit Levels":entry_exit}
 
 # --- Streamlit UI ---
-# --- Streamlit UI: Clean and readable with safe formatting ---
 st.title("Multi-Agent Stock Recommendation System (Phases 1-5)")
 
-# Helper functions for safe formatting
+# Safe formatting helpers
 def format_entry_exit(d):
     if not isinstance(d, dict):
         return {}
     formatted = {}
     for k, v in d.items():
         if v and isinstance(v, tuple):
-            formatted[k] = (round(float(v[0]), 2), round(float(v[1]), 2))
+            formatted[k] = (round(float(v[0]),2), round(float(v[1]),2))
     return formatted
 
 def format_debate(d):
     if not isinstance(d, dict):
         return "No debate data"
-    formatted = [f"{k}: {v}" for k, v in d.items()]
+    formatted = [f"{k}: {v}" for k,v in d.items()]
     return "\n".join(formatted)
 
 if st.button("Generate Recommendations"):
-    tickers = get_top_stocks(n=10)
+    tickers = get_top_stocks(n=5)
     results = [analyze_stock(t) for t in tickers]
     df = pd.DataFrame(results)
 
-    # Apply formatting safely
+    # Format nested data
     df['Debate Transcript'] = df['Debate Transcript'].apply(format_debate)
     df['Entry/Exit Levels'] = df['Entry/Exit Levels'].apply(format_entry_exit)
 
-    # Display main table with horizontal scroll
+    # Main table scrollable
     st.dataframe(df[['Ticker','Recommendation','Confidence (%)','Risk Level']], width=1000, height=400)
 
     st.markdown("---")
     st.subheader("Detailed Stock Analysis")
-
-    # Expandable sections for each stock
     for i, row in df.iterrows():
         with st.expander(f"{row['Ticker']} - {row['Recommendation']} ({row['Confidence (%)']}%)"):
             st.write("Risk Level:", row['Risk Level'])
             st.write("Debate Transcript:\n", row['Debate Transcript'])
             st.write("Entry/Exit Levels:\n", row['Entry/Exit Levels'])
 
-    # CSV export button
+    # CSV export
     if st.button("Export CSV"):
         df.to_csv("stock_recommendations.csv", index=False)
         st.success("Report saved as stock_recommendations.csv")
-
-
