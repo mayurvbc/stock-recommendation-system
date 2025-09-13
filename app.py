@@ -11,14 +11,13 @@ def load_sentiment_pipeline():
 
 sentiment_analyzer = load_sentiment_pipeline()
 
-# --- Stock tickers pool for dynamic top stock selection ---
+# --- Stock tickers pool ---
 tickers_pool = [
     'RELIANCE.NS','TCS.NS','INFY.NS','HDFCBANK.NS','ICICIBANK.NS','KOTAKBANK.NS',
     'LT.NS','SBIN.NS','BAJFINANCE.NS','AXISBANK.NS','BHARTIARTL.NS','MARUTI.NS',
     'HINDUNILVR.NS','ITC.NS','TECHM.NS','WIPRO.NS','SUNPHARMA.NS','ADANIENT.NS',
     'JSWSTEEL.NS','ONGC.NS','TATAMOTORS.NS','ULTRACEMCO.NS','HCLTECH.NS','BPCL.NS',
-    'EICHERMOT.NS','GRASIM.NS','VEDL.NS','TITAN.NS','INDUSINDBK.NS','NTPC.NS',
-    # Add more tickers as needed
+    'EICHERMOT.NS','GRASIM.NS','VEDL.NS','TITAN.NS','INDUSINDBK.NS','NTPC.NS'
 ]
 
 # --- Fetch stock data ---
@@ -40,8 +39,7 @@ def get_top_stocks_yf(tickers, n=5):
         except:
             continue
     stock_volumes.sort(key=lambda x: x[1], reverse=True)
-    top_stocks = [t[0] for t in stock_volumes[:n]]
-    return top_stocks
+    return [t[0] for t in stock_volumes[:n]]
 
 @st.cache_data
 def get_top_stocks(n=5):
@@ -53,9 +51,9 @@ def price_action_agent(hist):
     ma30 = hist['Close'].rolling(30).mean().iloc[-1]
     last = hist['Close'].iloc[-1]
     if ma10 > ma30:
-        return "Bullish MA", 0.4, last*1.01, last*1.05
+        return "Bullish MA", 0.3, last*1.01, last*1.05
     else:
-        return "Bearish MA", 0.2, last*0.99, last*0.95
+        return "Bearish MA", 0.15, last*0.99, last*0.95
 
 def technical_agent(hist):
     close = hist['Close']
@@ -71,7 +69,7 @@ def technical_agent(hist):
     last_close = close.iloc[-1]
     bullish = last_close < upper.iloc[-1] and rsi.iloc[-1] < 70
     if bullish:
-        return f"Technical Bullish (RSI={round(rsi.iloc[-1],1)})", 0.3, last_close*1.01, last_close*1.05
+        return f"Technical Bullish (RSI={round(rsi.iloc[-1],1)})", 0.25, last_close*1.01, last_close*1.05
     else:
         return f"Technical Bearish/neutral (RSI={round(rsi.iloc[-1],1)})", 0.15, last_close*0.99, last_close*0.95
 
@@ -82,16 +80,16 @@ def sentiment_agent(ticker):
     ]
     sentiments = [sentiment_analyzer(h)[0] for h in headlines]
     pos = sum(1 for s in sentiments if s['label']=='POSITIVE')
-    score = 0.2 if pos >=1 else 0.1
+    score = 0.15 if pos >=1 else 0.1
     return f"{pos}/2 positive", score, None, None
 
 def fundamental_agent(info):
     pe = info.get('trailingPE', None)
     roe = info.get('returnOnEquity', None)
     if pe and pe<25 and roe and roe>0.15:
-        return f"Strong fundamentals (PE={pe}, ROE={round(roe,2)})", 0.3, None, None
+        return f"Strong fundamentals (PE={pe}, ROE={round(roe,2)})", 0.2, None, None
     else:
-        return f"Moderate fundamentals (PE={pe}, ROE={roe})", 0.15, None, None
+        return f"Moderate fundamentals (PE={pe}, ROE={roe})", 0.1, None, None
 
 def volume_agent(hist):
     v10 = hist['Volume'].rolling(10).mean().iloc[-1]
@@ -99,7 +97,7 @@ def volume_agent(hist):
     if v10>1.5*v30:
         return "Volume spike", 0.1, None, None
     else:
-        return "Volume normal", 0.05, None, None
+        return "Volume normal", 0.1, None, None
 
 # --- Moderator ---
 def moderator(debate_dict):
@@ -119,37 +117,49 @@ def analyze_stock(ticker):
     if hist.empty:
         return {"Ticker": ticker, "Recommendation":"Data Unavailable","Confidence (%)":0, 
                 "Risk Level":"N/A", "Debate Transcript":{}, "Entry/Exit Levels":{}}
+
     debate = {}
     debate['Price Action'] = price_action_agent(hist)
     debate['Technical'] = technical_agent(hist)
     debate['Sentiment'] = sentiment_agent(ticker)
     debate['Fundamentals'] = fundamental_agent(info)
     debate['Volume'] = volume_agent(hist)
+
     adjusted = moderator(debate)
-    final_score = sum(score for _,score,_,_ in adjusted.values())
-    
+
     # --- Normalize confidence ---
-    final_score = min(final_score, 1.0)
-    confidence_percent = round(final_score*100,2)
-    
+    agent_weights = [0.3,0.25,0.15,0.2,0.1]  # max possible for each agent
+    max_possible_score = sum(agent_weights)
+    final_score = sum(score for _,score,_,_ in adjusted.values())
+    final_score_normalized = min(final_score / max_possible_score, 1.0)
+
+    # --- Optional volatility adjustment ---
+    volatility = hist['Close'].pct_change().rolling(30).std().iloc[-1]
+    final_score_normalized *= max(0.8, 1 - volatility)  # reduces confidence if volatile
+
+    confidence_percent = round(final_score_normalized*100,2)
+
     # --- Risk levels ---
-    if final_score >= 0.7:
+    if final_score_normalized >= 0.7:
         risk_level = "High-risk"
-    elif final_score >= 0.4:
+    elif final_score_normalized >= 0.4:
         risk_level = "Medium-risk"
     else:
         risk_level = "Low-risk"
 
     transcript = {agent:arg for agent,(arg,_,_,_) in adjusted.items()}
     entry_exit = {agent:(entry,exit_level) for agent,(_,_,entry,exit_level) in adjusted.items() if entry and exit_level}
-    return {"Ticker":ticker,"Recommendation":"Buy" if final_score>=0.6 else "Hold",
-            "Confidence (%)":confidence_percent,"Risk Level":risk_level,
-            "Debate Transcript":transcript,"Entry/Exit Levels":entry_exit}
+
+    return {"Ticker":ticker,
+            "Recommendation":"Buy" if final_score_normalized>=0.6 else "Hold",
+            "Confidence (%)":confidence_percent,
+            "Risk Level":risk_level,
+            "Debate Transcript":transcript,
+            "Entry/Exit Levels":entry_exit}
 
 # --- Streamlit UI ---
-st.title("Multi-Agent Stock Recommendation System (Phases 1-5, Fixed)")
+st.title("Multi-Agent Stock Recommendation System (Normalized & Reliable)")
 
-# Safe formatting helpers
 def format_entry_exit(d):
     if not isinstance(d, dict):
         return {}
@@ -170,11 +180,9 @@ if st.button("Generate Recommendations"):
     results = [analyze_stock(t) for t in tickers]
     df = pd.DataFrame(results)
 
-    # Format nested data
     df['Debate Transcript'] = df['Debate Transcript'].apply(format_debate)
     df['Entry/Exit Levels'] = df['Entry/Exit Levels'].apply(format_entry_exit)
 
-    # Main table scrollable
     st.dataframe(df[['Ticker','Recommendation','Confidence (%)','Risk Level']], width=1000, height=400)
 
     st.markdown("---")
@@ -185,7 +193,6 @@ if st.button("Generate Recommendations"):
             st.write("Debate Transcript:\n", row['Debate Transcript'])
             st.write("Entry/Exit Levels:\n", row['Entry/Exit Levels'])
 
-    # CSV export
     if st.button("Export CSV"):
         df.to_csv("stock_recommendations.csv", index=False)
         st.success("Report saved as stock_recommendations.csv")
