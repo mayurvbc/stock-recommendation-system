@@ -111,11 +111,13 @@ def analyze_stock(ticker):
             "Risk Level":risk_level,"Debate Transcript":transcript,"Entry/Exit Levels":entry_exit}
 
 # --- Streamlit UI ---
-# --- Streamlit UI: Clean and readable ---
+# --- Streamlit UI: Clean and readable with safe formatting ---
 st.title("Multi-Agent Stock Recommendation System (Phases 1-5)")
 
-# Helper functions for formatting
+# Helper functions for safe formatting
 def format_entry_exit(d):
+    if not isinstance(d, dict):
+        return {}
     formatted = {}
     for k, v in d.items():
         if v and isinstance(v, tuple):
@@ -123,6 +125,8 @@ def format_entry_exit(d):
     return formatted
 
 def format_debate(d):
+    if not isinstance(d, dict):
+        return "No debate data"
     formatted = [f"{k}: {v}" for k, v in d.items()]
     return "\n".join(formatted)
 
@@ -131,7 +135,7 @@ if st.button("Generate Recommendations"):
     results = [analyze_stock(t) for t in tickers]
     df = pd.DataFrame(results)
 
-    # Apply formatting
+    # Apply formatting safely
     df['Debate Transcript'] = df['Debate Transcript'].apply(format_debate)
     df['Entry/Exit Levels'] = df['Entry/Exit Levels'].apply(format_entry_exit)
 
@@ -152,4 +156,5 @@ if st.button("Generate Recommendations"):
     if st.button("Export CSV"):
         df.to_csv("stock_recommendations.csv", index=False)
         st.success("Report saved as stock_recommendations.csv")
+
 
