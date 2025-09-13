@@ -4,12 +4,22 @@ from transformers import pipeline
 import pandas as pd
 import numpy as np
 
-# --- Cached sentiment pipeline ---
+# --- Sentiment pipeline ---
 @st.cache_resource
 def load_sentiment_pipeline():
     return pipeline("sentiment-analysis")
 
 sentiment_analyzer = load_sentiment_pipeline()
+
+# --- Stock tickers pool for dynamic top stock selection ---
+tickers_pool = [
+    'RELIANCE.NS','TCS.NS','INFY.NS','HDFCBANK.NS','ICICIBANK.NS','KOTAKBANK.NS',
+    'LT.NS','SBIN.NS','BAJFINANCE.NS','AXISBANK.NS','BHARTIARTL.NS','MARUTI.NS',
+    'HINDUNILVR.NS','ITC.NS','TECHM.NS','WIPRO.NS','SUNPHARMA.NS','ADANIENT.NS',
+    'JSWSTEEL.NS','ONGC.NS','TATAMOTORS.NS','ULTRACEMCO.NS','HCLTECH.NS','BPCL.NS',
+    'EICHERMOT.NS','GRASIM.NS','VEDL.NS','TITAN.NS','INDUSINDBK.NS','NTPC.NS',
+    # Add more tickers as needed
+]
 
 # --- Fetch stock data ---
 @st.cache_data
@@ -19,7 +29,7 @@ def fetch_stock_data(ticker, period="6mo"):
     info = data.info
     return hist, info
 
-# --- Get top stocks using yfinance ---
+# --- Dynamic top stocks by average volume ---
 def get_top_stocks_yf(tickers, n=5):
     stock_volumes = []
     for ticker in tickers:
@@ -35,10 +45,9 @@ def get_top_stocks_yf(tickers, n=5):
 
 @st.cache_data
 def get_top_stocks(n=5):
-    tickers = ['VBL.NS','DABUR.NS','PFC.NS','ABDL.NS','JIO.NS','FINANCE.NS']
-    return get_top_stocks_yf(tickers, n)
+    return get_top_stocks_yf(tickers_pool, n)
 
-# --- Agents ---
+# --- Multi-agent analysis ---
 def price_action_agent(hist):
     ma10 = hist['Close'].rolling(10).mean().iloc[-1]
     ma30 = hist['Close'].rolling(30).mean().iloc[-1]
@@ -108,7 +117,8 @@ def moderator(debate_dict):
 def analyze_stock(ticker):
     hist, info = fetch_stock_data(ticker)
     if hist.empty:
-        return {"Ticker": ticker, "Recommendation":"Data Unavailable","Confidence (%)":0, "Risk Level":"N/A", "Debate Transcript":{}, "Entry/Exit Levels":{}}
+        return {"Ticker": ticker, "Recommendation":"Data Unavailable","Confidence (%)":0, 
+                "Risk Level":"N/A", "Debate Transcript":{}, "Entry/Exit Levels":{}}
     debate = {}
     debate['Price Action'] = price_action_agent(hist)
     debate['Technical'] = technical_agent(hist)
@@ -125,7 +135,7 @@ def analyze_stock(ticker):
             "Risk Level":risk_level,"Debate Transcript":transcript,"Entry/Exit Levels":entry_exit}
 
 # --- Streamlit UI ---
-st.title("Multi-Agent Stock Recommendation System (Phases 1-5)")
+st.title("Multi-Agent Stock Recommendation System (Dynamic Top Stocks)")
 
 # Safe formatting helpers
 def format_entry_exit(d):
