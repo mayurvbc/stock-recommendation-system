@@ -68,10 +68,16 @@ def price_action_agent(hist):
     ma10 = hist['Close'].rolling(10).mean().iloc[-1]
     ma30 = hist['Close'].rolling(30).mean().iloc[-1]
     last = hist['Close'].iloc[-1]
+    atr = hist['Close'].diff().abs().rolling(14).mean().iloc[-1]
+
     if ma10 > ma30:
-        return "Bullish MA", 0.3, last*1.01, last*1.05
+        target = last + atr*2
+        timeline = "Short-term"
+        return "Bullish MA", 0.3, last*1.01, last*1.05, target, timeline
     else:
-        return "Bearish MA", 0.0, last*0.99, last*0.95  # Lower score for bearish
+        target = last - atr*2
+        timeline = "Short-term"
+        return "Bearish MA", 0.0, last*0.99, last*0.95, target, timeline
 
 def technical_agent_enhanced(hist):
     close = hist['Close']
@@ -85,7 +91,10 @@ def technical_agent_enhanced(hist):
     std20 = close.rolling(20).std()
     upper = sma20 + 2*std20
     lower = sma20 - 2*std20
-    bollinger_signal = 1 if close.iloc[-1] < upper.iloc[-1] else -1
+
+    target_price = upper.iloc[-1] if macd_signal > 0 else lower.iloc[-1]
+    trend_strength = abs(macd_signal)
+    timeline = "Short-term" if trend_strength < 0.5 else "Medium-term"
 
     delta = close.diff()
     up, down = delta.clip(lower=0), -delta.clip(upper=0)
@@ -95,9 +104,10 @@ def technical_agent_enhanced(hist):
     rsi = 100 - 100/(1+rs)
     rsi_signal = 1 if rsi.iloc[-1] < 70 else -1
 
-    score = 0.15 + 0.1*(macd_signal>0) + 0.05*(bollinger_signal>0) + 0.05*(rsi_signal>0)
-    score = min(max(score,0), 1.0)  # clamp 0-1
-    return f"MACD={round(macd.iloc[-1],2)}, RSI={round(rsi.iloc[-1],1)}", score, None, None
+    score = 0.15 + 0.1*(macd_signal>0) + 0.05*(close.iloc[-1]<upper.iloc[-1]) + 0.05*(rsi_signal>0)
+    score = min(max(score,0),1.0)
+
+    return f"MACD={round(macd.iloc[-1],2)}, RSI={round(rsi.iloc[-1],1)}", score, None, None, target_price, timeline
 
 def fundamental_agent_enhanced(info):
     pe = info.get('trailingPE', None)
@@ -105,7 +115,7 @@ def fundamental_agent_enhanced(info):
     de = info.get('debtToEquity', None)
     epsg = info.get('earningsQuarterlyGrowth', None)
     div = info.get('dividendYield', None)
-    
+
     score = 0.1
     args = []
 
@@ -113,7 +123,7 @@ def fundamental_agent_enhanced(info):
         score += 0.05
         args.append(f"PE={pe}")
     elif pe:
-        score -= 0.05  # penalize high PE
+        score -= 0.05
     if roe and roe>0.15:
         score += 0.05
         args.append(f"ROE={round(roe,2)}")
@@ -132,17 +142,17 @@ def fundamental_agent_enhanced(info):
     if div:
         score += 0.05
         args.append(f"DivYield={round(div,2)}")
-    
+
     score = min(max(score,0),1.0)
-    return " | ".join(args) if args else "Moderate fundamentals", score, None, None
+    return " | ".join(args) if args else "Moderate fundamentals", score, None, None, None, "Medium-term"
 
 def volume_agent(hist):
     v10 = hist['Volume'].rolling(10).mean().iloc[-1]
     v30 = hist['Volume'].rolling(30).mean().iloc[-1]
     if v10>1.5*v30:
-        return "Volume spike", 0.1, None, None
+        return "Volume spike", 0.1, None, None, None, "Short-term"
     else:
-        return "Volume normal", 0.0, None, None  # neutral
+        return "Volume normal", 0.0, None, None, None, "Short-term"
 
 def sentiment_agent_financial(headlines):
     scores = []
@@ -154,19 +164,19 @@ def sentiment_agent_financial(headlines):
     if scores:
         avg_score = sum(scores)/len(scores)
         score = min(max(0.25 + avg_score*0.25,0),1.0)
-        return f"{len([s for s in scores if s>0])}/{len(scores)} positive", score, None, None
+        return f"{len([s for s in scores if s>0])}/{len(scores)} positive", score, None, None, None, "Short-term"
     else:
-        return "No news", 0.1, None, None
+        return "No news", 0.1, None, None, None, "Short-term"
 
 def moderator(debate_dict):
-    scores = [score for _,score,_,_ in debate_dict.values()]
+    scores = [score for _,score,_,_,_,_ in debate_dict.values()]
     disagreement = max(scores)-min(scores)
     adjusted = {}
-    for agent,(arg,score,entry,exit_level) in debate_dict.items():
+    for agent,(arg,score,entry,exit_level,target,timeline) in debate_dict.items():
         if disagreement>0.3 and score==max(scores):
-            adjusted[agent]=(arg+" (boost)", min(score+0.05,1.0), entry, exit_level)
+            adjusted[agent]=(arg+" (boost)", min(score+0.05,1.0), entry, exit_level, target, timeline)
         else:
-            adjusted[agent]=(arg,score,entry,exit_level)
+            adjusted[agent]=(arg,score,entry,exit_level,target,timeline)
     return adjusted
 
 # --- Analyze stock ---
@@ -174,7 +184,12 @@ def analyze_stock(ticker):
     hist, info = fetch_stock_data(ticker)
     if hist.empty:
         return {"Ticker": ticker, "Recommendation":"Data Unavailable","Confidence (%)":0, 
-                "Risk Level":"N/A", "Debate Transcript":{}, "Entry/Exit Levels":{}}
+                "Risk Level":"N/A", "Debate Transcript":{}, "Entry/Exit Levels":{},
+                "Current Price":None, "Target Price":None, "Suggested Timeline":None,
+                "Latest Data":None}
+
+    last_price = hist['Close'].iloc[-1]
+    latest_time = hist.index[-1]
 
     debate = {}
     debate['Price Action'] = price_action_agent(hist)
@@ -194,7 +209,7 @@ def analyze_stock(ticker):
 
     agent_weights = [0.3,0.25,0.25,0.2,0.1]
     max_possible_score = sum(agent_weights)
-    final_score = sum(score for _,score,_,_ in adjusted.values())
+    final_score = sum(score for _,score,_,_,_,_ in adjusted.values())
     
     volatility = hist['Close'].pct_change().rolling(30).std().iloc[-1]
     final_score_normalized = min(final_score/max_possible_score * max(0, 1-volatility), 1.0)
@@ -211,21 +226,29 @@ def analyze_stock(ticker):
         recommendation = "Sell"
         risk_level = "Low-risk"
 
-    transcript = {agent:arg for agent,(arg,_,_,_) in adjusted.items()}
-    entry_exit = {agent:(entry,exit_level) for agent,(_,_,entry,exit_level) in adjusted.items() if entry and exit_level}
+    # Collect target & timeline (take from highest scoring agent)
+    top_agent = max(adjusted.items(), key=lambda x:x[1][1])
+    target_price = top_agent[1][4]
+    timeline = top_agent[1][5]
+
+    transcript = {agent:arg for agent,(arg,_,_,_,_,_) in adjusted.items()}
+    entry_exit = {agent:(entry,exit_level) for agent,(_,_,entry,exit_level,_,_) in adjusted.items() if entry and exit_level}
 
     return {"Ticker":ticker,
+            "Current Price":round(last_price,2),
             "Recommendation":recommendation,
             "Confidence (%)":confidence_percent,
             "Risk Level":risk_level,
+            "Target Price": round(target_price,2) if target_price else None,
+            "Suggested Timeline": timeline,
             "Debate Transcript":transcript,
-            "Entry/Exit Levels":entry_exit}
+            "Entry/Exit Levels":entry_exit,
+            "Latest Data": latest_time.strftime("%Y-%m-%d %H:%M")}
 
 # --- Streamlit UI ---
-st.title("Multi-Agent Stock Recommendation System (Phase 6)")
+st.title("Multi-Agent Stock Recommendation System (Phase 7 Upgrade)")
 
 if st.button("Generate Recommendations"):
-    # --- Top 5 high-volume stocks ---
     top_tickers = get_top_stocks(n=5)
     top_results = [analyze_stock(t) for t in top_tickers]
     df_top = pd.DataFrame(top_results)
@@ -234,16 +257,18 @@ if st.button("Generate Recommendations"):
     df_top['Entry/Exit Levels'] = df_top['Entry/Exit Levels'].apply(format_entry_exit)
 
     st.subheader("Top 5 High-Volume Stocks")
-    st.dataframe(df_top[['Ticker','Recommendation','Confidence (%)','Risk Level']])
+    st.dataframe(df_top[['Ticker','Current Price','Target Price','Suggested Timeline','Recommendation','Confidence (%)','Risk Level','Latest Data']])
 
     st.markdown("---")
     st.subheader("Detailed Analysis")
     for i, row in df_top.iterrows():
         with st.expander(f"{row['Ticker']} - {row['Recommendation']} ({row['Confidence (%)']}%, {row['Risk Level']})"):
+            st.text(f"Current Price: {row['Current Price']}")
+            st.text(f"Target Price: {row['Target Price']} ({row['Suggested Timeline']})")
             st.text("Debate Transcript:\n"+row['Debate Transcript'])
             st.text("Entry/Exit Levels:\n"+str(row['Entry/Exit Levels']))
+            st.text(f"Latest Data Fetched: {row['Latest Data']}")
 
-    # --- Remaining stocks confidence ---
     remaining_tickers = [t for t in tickers_pool if t not in top_tickers]
     remaining_results = [analyze_stock(t) for t in remaining_tickers]
     df_remaining = pd.DataFrame(remaining_results)
@@ -253,4 +278,4 @@ if st.button("Generate Recommendations"):
     
     st.markdown("---")
     st.subheader("Confidence Ratings - Other Stocks")
-    st.dataframe(df_remaining[['Ticker','Confidence (%)','Recommendation','Risk Level']])
+    st.dataframe(df_remaining[['Ticker','Current Price','Target Price','Suggested Timeline','Recommendation','Confidence (%)','Risk Level','Latest Data']])
