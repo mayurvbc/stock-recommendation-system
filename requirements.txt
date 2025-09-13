@@ -2,4 +2,6 @@ yfinance
 streamlit
 transformers
 pandas
+numpy
 torch
+requests
