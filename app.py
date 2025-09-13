@@ -127,15 +127,27 @@ def analyze_stock(ticker):
     debate['Volume'] = volume_agent(hist)
     adjusted = moderator(debate)
     final_score = sum(score for _,score,_,_ in adjusted.values())
-    recommendation = "Buy" if final_score>=0.6 else "Hold"
-    risk_level = "High-risk" if final_score>=0.7 else "Low-risk"
+    
+    # --- Normalize confidence ---
+    final_score = min(final_score, 1.0)
+    confidence_percent = round(final_score*100,2)
+    
+    # --- Risk levels ---
+    if final_score >= 0.7:
+        risk_level = "High-risk"
+    elif final_score >= 0.4:
+        risk_level = "Medium-risk"
+    else:
+        risk_level = "Low-risk"
+
     transcript = {agent:arg for agent,(arg,_,_,_) in adjusted.items()}
     entry_exit = {agent:(entry,exit_level) for agent,(_,_,entry,exit_level) in adjusted.items() if entry and exit_level}
-    return {"Ticker":ticker,"Recommendation":recommendation,"Confidence (%)":round(final_score*100,2),
-            "Risk Level":risk_level,"Debate Transcript":transcript,"Entry/Exit Levels":entry_exit}
+    return {"Ticker":ticker,"Recommendation":"Buy" if final_score>=0.6 else "Hold",
+            "Confidence (%)":confidence_percent,"Risk Level":risk_level,
+            "Debate Transcript":transcript,"Entry/Exit Levels":entry_exit}
 
 # --- Streamlit UI ---
-st.title("Multi-Agent Stock Recommendation System (Dynamic Top Stocks)")
+st.title("Multi-Agent Stock Recommendation System (Phases 1-5, Fixed)")
 
 # Safe formatting helpers
 def format_entry_exit(d):
