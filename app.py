@@ -238,6 +238,22 @@ def analyze_stock(ticker):
 #         df.to_csv('stock_recommendations_phase6.csv', index=False)
 #         st.success("Report saved as stock_recommendations_phase6.csv")
 
+# --- Helper functions ---
+def format_entry_exit(d):
+    if not isinstance(d, dict):
+        return {}
+    formatted = {}
+    for k,v in d.items():
+        if v and isinstance(v, tuple):
+            formatted[k] = (round(float(v[0]),2), round(float(v[1]),2))
+    return formatted
+
+def format_debate(d):
+    if not isinstance(d, dict):
+        return "No debate data"
+    formatted = [f"{k}: {v}" for k,v in d.items()]
+    return "\n".join(formatted)
+
 # --- Streamlit UI ---
 st.title("Multi-Agent Stock Recommendation System (Phase 6)")
 
@@ -264,6 +280,9 @@ if st.button("Generate Recommendations"):
     remaining_tickers = [t for t in tickers_pool if t not in top_tickers]
     remaining_results = [analyze_stock(t) for t in remaining_tickers]
     df_remaining = pd.DataFrame(remaining_results)
+    
+    df_remaining['Debate Transcript'] = df_remaining['Debate Transcript'].apply(format_debate)
+    df_remaining['Entry/Exit Levels'] = df_remaining['Entry/Exit Levels'].apply(format_entry_exit)
     
     st.markdown("---")
     st.subheader("Confidence Ratings - Other Stocks")
