@@ -158,7 +158,7 @@ def analyze_stock(ticker):
             "Entry/Exit Levels":entry_exit}
 
 # --- Streamlit UI ---
-st.title("Multi-Agent Stock Recommendation System (Normalized & Reliable)")
+st.title("Multi-Agent Stock Recommendation System (Final Version)")
 
 def format_entry_exit(d):
     if not isinstance(d, dict):
@@ -183,8 +183,18 @@ if st.button("Generate Recommendations"):
     df['Debate Transcript'] = df['Debate Transcript'].apply(format_debate)
     df['Entry/Exit Levels'] = df['Entry/Exit Levels'].apply(format_entry_exit)
 
-    st.dataframe(df[['Ticker','Recommendation','Confidence (%)','Risk Level']], width=1000, height=400)
+    # Main table
+    def color_risk(val):
+        if val=="High-risk":
+            return "background-color: #ff9999"
+        elif val=="Medium-risk":
+            return "background-color: #fff799"
+        else:
+            return "background-color: #b3ffb3"
 
+    st.dataframe(df[['Ticker','Recommendation','Confidence (%)','Risk Level']].style.applymap(color_risk), width=1000, height=400)
+
+    # Detailed view
     st.markdown("---")
     st.subheader("Detailed Stock Analysis")
     for i, row in df.iterrows():
