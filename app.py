@@ -118,13 +118,25 @@ if st.button("Generate Recommendations"):
     results = [analyze_stock(t) for t in tickers]
     df = pd.DataFrame(results)
 
-    # Safely normalize nested dicts with prefixes to avoid column collisions
-    debate_df = pd.json_normalize(df.pop("Debate Transcript")).add_prefix("Debate_")
-    entry_df = pd.json_normalize(df.pop("Entry/Exit Levels")).add_prefix("EntryExit_")
-    df_expanded = df.join(debate_df).join(entry_df)
+    # Convert nested dicts to strings for easier display
+    df['Debate Transcript'] = df['Debate Transcript'].apply(lambda x: str(x))
+    df['Entry/Exit Levels'] = df['Entry/Exit Levels'].apply(lambda x: str(x))
 
-    st.table(df_expanded)
+    # Display main table with horizontal scroll
+    st.dataframe(df[['Ticker','Recommendation','Confidence (%)','Risk Level']], width=1000, height=400)
 
+    st.markdown("---")
+    st.subheader("Detailed Stock Analysis")
+
+    # Expandable sections for each stock
+    for i, row in df.iterrows():
+        with st.expander(f"{row['Ticker']} - {row['Recommendation']} ({row['Confidence (%)']}%)"):
+            st.write("Risk Level:", row['Risk Level'])
+            st.write("Debate Transcript:", row['Debate Transcript'])
+            st.write("Entry/Exit Levels:", row['Entry/Exit Levels'])
+
+    # CSV export button
     if st.button("Export CSV"):
-        df_expanded.to_csv("stock_recommendations.csv", index=False)
-        st.success("Report saved")
+        df.to_csv("stock_recommendations.csv", index=False)
+        st.success("Report saved as stock_recommendations.csv")
+
