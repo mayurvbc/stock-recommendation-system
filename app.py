@@ -52,4 +52,28 @@ def analyze_stock(ticker):
     pa_arg, pa_score = price_action_agent(hist)
     sent_arg, sent_score = sentiment_agent(ticker)
     
-    final_score = (pa_score * 0.6)*
+    final_score = (pa_score * 0.6) + (sent_score * 0.4)
+    recommendation = "Buy" if final_score > 0.6 else "Hold"
+    
+    return {
+        "Ticker": ticker,
+        "Recommendation": recommendation,
+        "Confidence (%)": round(final_score * 100, 2),
+        "Price Action": pa_arg,
+        "Sentiment": sent_arg
+    }
+
+st.title("Simulated Stock Recommendation System")
+
+if st.button("Generate Recommendations"):
+    results = []
+    for ticker in tickers:
+        result = analyze_stock(ticker)
+        results.append(result)
+    
+    df = pd.DataFrame(results)
+    st.table(df)
+
+    if st.button("Export as CSV"):
+        df.to_csv('stock_recommendations.csv')
+        st.success("Report saved as stock_recommendations.csv")
