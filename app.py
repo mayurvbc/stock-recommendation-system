@@ -195,45 +195,77 @@ def analyze_stock(ticker):
             "Entry/Exit Levels":entry_exit}
 
 # --- Streamlit UI ---
+# st.title("Multi-Agent Stock Recommendation System (Phase 6)")
+
+# def format_entry_exit(d):
+#     if not isinstance(d, dict):
+#         return {}
+#     formatted = {}
+#     for k,v in d.items():
+#         if v and isinstance(v, tuple):
+#             formatted[k] = (round(float(v[0]),2), round(float(v[1]),2))
+#     return formatted
+
+# def format_debate(d):
+#     if not isinstance(d, dict):
+#         return "No debate data"
+#     formatted = [f"{k}: {v}" for k,v in d.items()]
+#     return "\n".join(formatted)
+
+# if st.button("Generate Recommendations"):
+#     tickers = get_top_stocks(n=5)
+#     results = [analyze_stock(t) for t in tickers]
+#     df = pd.DataFrame(results)
+
+#     df['Debate Transcript'] = df['Debate Transcript'].apply(format_debate)
+#     df['Entry/Exit Levels'] = df['Entry/Exit Levels'].apply(format_entry_exit)
+
+#     def color_risk(val):
+#         if val=="High-risk": return "background-color: #ff9999"
+#         elif val=="Medium-risk": return "background-color: #fff799"
+#         else: return "background-color: #b3ffb3"
+
+#     st.dataframe(df[['Ticker','Recommendation','Confidence (%)','Risk Level']].style.applymap(color_risk), width=1000, height=400)
+
+#     st.markdown("---")
+#     st.subheader("Detailed Stock Analysis")
+#     for i, row in df.iterrows():
+#         with st.expander(f"{row['Ticker']} - {row['Recommendation']} ({row['Confidence (%)']}%, {row['Risk Level']})"):
+#             st.text("Debate Transcript:\n"+row['Debate Transcript'])
+#             st.text("Entry/Exit Levels:\n"+str(row['Entry/Exit Levels']))
+
+#     if st.button("Export as CSV"):
+#         df.to_csv('stock_recommendations_phase6.csv', index=False)
+#         st.success("Report saved as stock_recommendations_phase6.csv")
+
+# --- Streamlit UI ---
 st.title("Multi-Agent Stock Recommendation System (Phase 6)")
 
-def format_entry_exit(d):
-    if not isinstance(d, dict):
-        return {}
-    formatted = {}
-    for k,v in d.items():
-        if v and isinstance(v, tuple):
-            formatted[k] = (round(float(v[0]),2), round(float(v[1]),2))
-    return formatted
-
-def format_debate(d):
-    if not isinstance(d, dict):
-        return "No debate data"
-    formatted = [f"{k}: {v}" for k,v in d.items()]
-    return "\n".join(formatted)
-
 if st.button("Generate Recommendations"):
-    tickers = get_top_stocks(n=5)
-    results = [analyze_stock(t) for t in tickers]
-    df = pd.DataFrame(results)
+    # --- Top 5 high-volume stocks ---
+    top_tickers = get_top_stocks(n=5)
+    top_results = [analyze_stock(t) for t in top_tickers]
+    df_top = pd.DataFrame(top_results)
+    
+    df_top['Debate Transcript'] = df_top['Debate Transcript'].apply(format_debate)
+    df_top['Entry/Exit Levels'] = df_top['Entry/Exit Levels'].apply(format_entry_exit)
 
-    df['Debate Transcript'] = df['Debate Transcript'].apply(format_debate)
-    df['Entry/Exit Levels'] = df['Entry/Exit Levels'].apply(format_entry_exit)
-
-    def color_risk(val):
-        if val=="High-risk": return "background-color: #ff9999"
-        elif val=="Medium-risk": return "background-color: #fff799"
-        else: return "background-color: #b3ffb3"
-
-    st.dataframe(df[['Ticker','Recommendation','Confidence (%)','Risk Level']].style.applymap(color_risk), width=1000, height=400)
+    st.subheader("Top 5 High-Volume Stocks")
+    st.dataframe(df_top[['Ticker','Recommendation','Confidence (%)','Risk Level']])
 
     st.markdown("---")
-    st.subheader("Detailed Stock Analysis")
-    for i, row in df.iterrows():
+    st.subheader("Detailed Analysis")
+    for i, row in df_top.iterrows():
         with st.expander(f"{row['Ticker']} - {row['Recommendation']} ({row['Confidence (%)']}%, {row['Risk Level']})"):
             st.text("Debate Transcript:\n"+row['Debate Transcript'])
             st.text("Entry/Exit Levels:\n"+str(row['Entry/Exit Levels']))
 
-    if st.button("Export as CSV"):
-        df.to_csv('stock_recommendations_phase6.csv', index=False)
-        st.success("Report saved as stock_recommendations_phase6.csv")
+    # --- Remaining stocks confidence ---
+    remaining_tickers = [t for t in tickers_pool if t not in top_tickers]
+    remaining_results = [analyze_stock(t) for t in remaining_tickers]
+    df_remaining = pd.DataFrame(remaining_results)
+    
+    st.markdown("---")
+    st.subheader("Confidence Ratings - Other Stocks")
+    st.dataframe(df_remaining[['Ticker','Confidence (%)','Recommendation','Risk Level']])
+
