@@ -1,15 +1,32 @@
 import yfinance as yf
 import streamlit as st
-from transformers import pipeline
 import pandas as pd
 import numpy as np
+from transformers import AutoTokenizer, AutoModelForSequenceClassification
+from scipy.special import softmax
 
-# --- Sentiment pipeline ---
+# --- Sentiment pipeline: FinBERT for finance ---
 @st.cache_resource
-def load_sentiment_pipeline():
-    return pipeline("sentiment-analysis")
+def load_finbert():
+    tokenizer = AutoTokenizer.from_pretrained("yiyanghkust/finbert-tone")
+    model = AutoModelForSequenceClassification.from_pretrained("yiyanghkust/finbert-tone")
+    return tokenizer, model
 
-sentiment_analyzer = load_sentiment_pipeline()
+finbert_tokenizer, finbert_model = load_finbert()
+
+def sentiment_agent_financial(headlines):
+    scores = []
+    for text in headlines:
+        inputs = finbert_tokenizer(text, return_tensors="pt", truncation=True)
+        outputs = finbert_model(**inputs)
+        probs = softmax(outputs.logits.detach().numpy()[0])
+        # probs = [positive, negative, neutral]
+        scores.append(probs[0] - probs[1])  # positive minus negative
+    if scores:
+        avg_score = sum(scores)/len(scores)
+        return f"{len([s for s in scores if s>0])}/{len(scores)} positive", max(0, min(0.25 + avg_score*0.25, 1.0))
+    else:
+        return "No news", 0.1
 
 # --- Stock tickers pool ---
 tickers_pool = [
@@ -28,7 +45,7 @@ def fetch_stock_data(ticker, period="6mo"):
     info = data.info
     return hist, info
 
-# --- Dynamic top stocks by average volume ---
+# --- Top stocks by volume ---
 def get_top_stocks_yf(tickers, n=5):
     stock_volumes = []
     for ticker in tickers:
@@ -45,7 +62,7 @@ def get_top_stocks_yf(tickers, n=5):
 def get_top_stocks(n=5):
     return get_top_stocks_yf(tickers_pool, n)
 
-# --- Multi-agent analysis ---
+# --- Agents ---
 def price_action_agent(hist):
     ma10 = hist['Close'].rolling(10).mean().iloc[-1]
     ma30 = hist['Close'].rolling(30).mean().iloc[-1]
@@ -55,41 +72,60 @@ def price_action_agent(hist):
     else:
         return "Bearish MA", 0.15, last*0.99, last*0.95
 
-def technical_agent(hist):
+def technical_agent_enhanced(hist):
     close = hist['Close']
+    ema12 = close.ewm(span=12).mean()
+    ema26 = close.ewm(span=26).mean()
+    macd = ema12 - ema26
+    signal = macd.ewm(span=9).mean()
+    macd_signal = macd.iloc[-1] - signal.iloc[-1]
+
+    sma20 = close.rolling(20).mean()
+    std20 = close.rolling(20).std()
+    upper = sma20 + 2*std20
+    lower = sma20 - 2*std20
+    bollinger_signal = 1 if close.iloc[-1] < upper.iloc[-1] else -1
+
     delta = close.diff()
     up, down = delta.clip(lower=0), -delta.clip(upper=0)
     roll_up = up.rolling(14).mean()
     roll_down = down.rolling(14).mean()
-    rs = roll_up / roll_down
-    rsi = 100 - (100 / (1 + rs))
-    sma20 = close.rolling(20).mean()
-    std20 = close.rolling(20).std()
-    upper = sma20 + 2*std20
-    last_close = close.iloc[-1]
-    bullish = last_close < upper.iloc[-1] and rsi.iloc[-1] < 70
-    if bullish:
-        return f"Technical Bullish (RSI={round(rsi.iloc[-1],1)})", 0.25, last_close*1.01, last_close*1.05
-    else:
-        return f"Technical Bearish/neutral (RSI={round(rsi.iloc[-1],1)})", 0.15, last_close*0.99, last_close*0.95
+    rs = roll_up/roll_down
+    rsi = 100 - 100/(1+rs)
+    rsi_signal = 1 if rsi.iloc[-1] < 70 else -1
 
-def sentiment_agent(ticker):
-    headlines = [
-        f"{ticker} reports strong earnings",
-        f"{ticker} faces regulatory risks"
-    ]
-    sentiments = [sentiment_analyzer(h)[0] for h in headlines]
-    pos = sum(1 for s in sentiments if s['label']=='POSITIVE')
-    score = 0.15 if pos >=1 else 0.1
-    return f"{pos}/2 positive", score, None, None
+    score = 0.15 + 0.1*(macd_signal>0) + 0.05*(bollinger_signal>0) + 0.05*(rsi_signal>0)
+    score = min(score, 1.0)
+    return f"MACD={round(macd.iloc[-1],2)}, RSI={round(rsi.iloc[-1],1)}", score, None, None
 
-def fundamental_agent(info):
+def fundamental_agent_enhanced(info):
     pe = info.get('trailingPE', None)
     roe = info.get('returnOnEquity', None)
-    if pe and pe<25 and roe and roe>0.15:
-        return f"Strong fundamentals (PE={pe}, ROE={round(roe,2)})", 0.2, None, None
-    else:
-        return f"Moderate fundamentals (PE={pe}, ROE={roe})", 0.1, None, None
+    de = info.get('debtToEquity', None)
+    epsg = info.get('earningsQuarterlyGrowth', None)
+    div = info.get('dividendYield', None)
+    
+    score = 0.1
+    args = []
+
+    if pe and pe<25: 
+        score += 0.05
+        args.append(f"PE={pe}")
+    if roe and roe>0.15:
+        score += 0.05
+        args.append(f"ROE={round(roe,2)}")
+    if de and de<1:
+        score += 0.05
+        args.append(f"D/E={de}")
+    if epsg and epsg>0.05:
+        score += 0.05
+        args.append(f"EPSG={round(epsg,2)}")
+    if div:
+        score += 0.05
+        args.append(f"DivYield={round(div,2)}")
+    
+    score = min(score,1.0)
+    return " | ".join(args) if args else "Moderate fundamentals", score, None, None
 
 def volume_agent(hist):
     v10 = hist['Volume'].rolling(10).mean().iloc[-1]
@@ -99,7 +135,6 @@ def volume_agent(hist):
     else:
         return "Volume normal", 0.1, None, None
 
-# --- Moderator ---
 def moderator(debate_dict):
     scores = [score for _,score,_,_ in debate_dict.values()]
     disagreement = max(scores)-min(scores)
@@ -120,26 +155,30 @@ def analyze_stock(ticker):
 
     debate = {}
     debate['Price Action'] = price_action_agent(hist)
-    debate['Technical'] = technical_agent(hist)
-    debate['Sentiment'] = sentiment_agent(ticker)
-    debate['Fundamentals'] = fundamental_agent(info)
+    debate['Technical'] = technical_agent_enhanced(hist)
+    
+    # Realistic news headlines via yfinance (limited)
+    try:
+        news_items = yf.Ticker(ticker).news[:5]
+        headlines = [n['title'] for n in news_items]
+    except:
+        headlines = [f"{ticker} reports strong earnings", f"{ticker} faces regulatory risks"]
+    debate['Sentiment'] = sentiment_agent_financial(headlines)
+    
+    debate['Fundamentals'] = fundamental_agent_enhanced(info)
     debate['Volume'] = volume_agent(hist)
 
     adjusted = moderator(debate)
 
-    # --- Normalize confidence ---
-    agent_weights = [0.3,0.25,0.15,0.2,0.1]  # max possible for each agent
+    agent_weights = [0.3,0.25,0.25,0.2,0.1]
     max_possible_score = sum(agent_weights)
     final_score = sum(score for _,score,_,_ in adjusted.values())
-    final_score_normalized = min(final_score / max_possible_score, 1.0)
+    final_score_normalized = min(final_score/max_possible_score, 1.0)
 
-    # --- Optional volatility adjustment ---
     volatility = hist['Close'].pct_change().rolling(30).std().iloc[-1]
-    final_score_normalized *= max(0.8, 1 - volatility)  # reduces confidence if volatile
+    final_score_normalized *= max(0.8,1-volatility)
 
     confidence_percent = round(final_score_normalized*100,2)
-
-    # --- Risk levels ---
     if final_score_normalized >= 0.7:
         risk_level = "High-risk"
     elif final_score_normalized >= 0.4:
@@ -158,13 +197,13 @@ def analyze_stock(ticker):
             "Entry/Exit Levels":entry_exit}
 
 # --- Streamlit UI ---
-st.title("Multi-Agent Stock Recommendation System (Final Version)")
+st.title("Multi-Agent Stock Recommendation System (Enhanced Phase 6)")
 
 def format_entry_exit(d):
     if not isinstance(d, dict):
         return {}
     formatted = {}
-    for k, v in d.items():
+    for k,v in d.items():
         if v and isinstance(v, tuple):
             formatted[k] = (round(float(v[0]),2), round(float(v[1]),2))
     return formatted
@@ -183,26 +222,20 @@ if st.button("Generate Recommendations"):
     df['Debate Transcript'] = df['Debate Transcript'].apply(format_debate)
     df['Entry/Exit Levels'] = df['Entry/Exit Levels'].apply(format_entry_exit)
 
-    # Main table
     def color_risk(val):
-        if val=="High-risk":
-            return "background-color: #ff9999"
-        elif val=="Medium-risk":
-            return "background-color: #fff799"
-        else:
-            return "background-color: #b3ffb3"
+        if val=="High-risk": return "background-color: #ff9999"
+        elif val=="Medium-risk": return "background-color: #fff799"
+        else: return "background-color: #b3ffb3"
 
     st.dataframe(df[['Ticker','Recommendation','Confidence (%)','Risk Level']].style.applymap(color_risk), width=1000, height=400)
 
-    # Detailed view
     st.markdown("---")
     st.subheader("Detailed Stock Analysis")
     for i, row in df.iterrows():
-        with st.expander(f"{row['Ticker']} - {row['Recommendation']} ({row['Confidence (%)']}%)"):
-            st.write("Risk Level:", row['Risk Level'])
-            st.write("Debate Transcript:\n", row['Debate Transcript'])
-            st.write("Entry/Exit Levels:\n", row['Entry/Exit Levels'])
+        with st.expander(f"{row['Ticker']} - {row['Recommendation']} ({row['Confidence (%)']}%, {row['Risk Level']})"):
+            st.text("Debate Transcript:\n"+row['Debate Transcript'])
+            st.text("Entry/Exit Levels:\n"+str(row['Entry/Exit Levels']))
 
-    if st.button("Export CSV"):
-        df.to_csv("stock_recommendations.csv", index=False)
-        st.success("Report saved as stock_recommendations.csv")
+    if st.button("Export as CSV"):
+        df.to_csv('stock_recommendations_phase6.csv', index=False)
+        st.success("Report saved as stock_recommendations_phase6.csv")
