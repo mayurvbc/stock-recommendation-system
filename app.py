@@ -5,7 +5,7 @@ import numpy as np
 from transformers import AutoTokenizer, AutoModelForSequenceClassification
 from scipy.special import softmax
 
-# --- Sentiment pipeline: FinBERT for finance ---
+# --- Load FinBERT ---
 @st.cache_resource
 def load_finbert():
     tokenizer = AutoTokenizer.from_pretrained("yiyanghkust/finbert-tone")
@@ -21,14 +21,14 @@ def sentiment_agent_financial(headlines):
         outputs = finbert_model(**inputs)
         probs = softmax(outputs.logits.detach().numpy()[0])
         # probs = [positive, negative, neutral]
-        scores.append(probs[0] - probs[1])  # positive minus negative
+        scores.append(probs[0] - probs[1])
     if scores:
         avg_score = sum(scores)/len(scores)
-        return f"{len([s for s in scores if s>0])}/{len(scores)} positive", max(0, min(0.25 + avg_score*0.25, 1.0))
+        return f"{len([s for s in scores if s>0])}/{len(scores)} positive", max(0, min(0.25 + avg_score*0.25, 1.0)), None, None
     else:
-        return "No news", 0.1
+        return "No news", 0.1, None, None
 
-# --- Stock tickers pool ---
+# --- Stock tickers ---
 tickers_pool = [
     'RELIANCE.NS','TCS.NS','INFY.NS','HDFCBANK.NS','ICICIBANK.NS','KOTAKBANK.NS',
     'LT.NS','SBIN.NS','BAJFINANCE.NS','AXISBANK.NS','BHARTIARTL.NS','MARUTI.NS',
@@ -45,7 +45,6 @@ def fetch_stock_data(ticker, period="6mo"):
     info = data.info
     return hist, info
 
-# --- Top stocks by volume ---
 def get_top_stocks_yf(tickers, n=5):
     stock_volumes = []
     for ticker in tickers:
@@ -157,7 +156,6 @@ def analyze_stock(ticker):
     debate['Price Action'] = price_action_agent(hist)
     debate['Technical'] = technical_agent_enhanced(hist)
     
-    # Realistic news headlines via yfinance (limited)
     try:
         news_items = yf.Ticker(ticker).news[:5]
         headlines = [n['title'] for n in news_items]
@@ -197,7 +195,7 @@ def analyze_stock(ticker):
             "Entry/Exit Levels":entry_exit}
 
 # --- Streamlit UI ---
-st.title("Multi-Agent Stock Recommendation System (Enhanced Phase 6)")
+st.title("Multi-Agent Stock Recommendation System (Phase 6)")
 
 def format_entry_exit(d):
     if not isinstance(d, dict):
