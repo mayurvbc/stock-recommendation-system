@@ -111,16 +111,29 @@ def analyze_stock(ticker):
             "Risk Level":risk_level,"Debate Transcript":transcript,"Entry/Exit Levels":entry_exit}
 
 # --- Streamlit UI ---
+# --- Streamlit UI: Clean and readable ---
 st.title("Multi-Agent Stock Recommendation System (Phases 1-5)")
+
+# Helper functions for formatting
+def format_entry_exit(d):
+    formatted = {}
+    for k, v in d.items():
+        if v and isinstance(v, tuple):
+            formatted[k] = (round(float(v[0]), 2), round(float(v[1]), 2))
+    return formatted
+
+def format_debate(d):
+    formatted = [f"{k}: {v}" for k, v in d.items()]
+    return "\n".join(formatted)
 
 if st.button("Generate Recommendations"):
     tickers = get_top_stocks(n=10)
     results = [analyze_stock(t) for t in tickers]
     df = pd.DataFrame(results)
 
-    # Convert nested dicts to strings for easier display
-    df['Debate Transcript'] = df['Debate Transcript'].apply(lambda x: str(x))
-    df['Entry/Exit Levels'] = df['Entry/Exit Levels'].apply(lambda x: str(x))
+    # Apply formatting
+    df['Debate Transcript'] = df['Debate Transcript'].apply(format_debate)
+    df['Entry/Exit Levels'] = df['Entry/Exit Levels'].apply(format_entry_exit)
 
     # Display main table with horizontal scroll
     st.dataframe(df[['Ticker','Recommendation','Confidence (%)','Risk Level']], width=1000, height=400)
@@ -132,8 +145,8 @@ if st.button("Generate Recommendations"):
     for i, row in df.iterrows():
         with st.expander(f"{row['Ticker']} - {row['Recommendation']} ({row['Confidence (%)']}%)"):
             st.write("Risk Level:", row['Risk Level'])
-            st.write("Debate Transcript:", row['Debate Transcript'])
-            st.write("Entry/Exit Levels:", row['Entry/Exit Levels'])
+            st.write("Debate Transcript:\n", row['Debate Transcript'])
+            st.write("Entry/Exit Levels:\n", row['Entry/Exit Levels'])
 
     # CSV export button
     if st.button("Export CSV"):
